@@ -1,23 +1,27 @@
+import os
+import tempfile
 import cv2
 import h5py
 import imageio
-import keras
 import matplotlib.pyplot as plt
 import numpy as np
-import tensorflow as tf
 from IPython.display import Image
-from keras import backend as K
-from keras.engine import Input, Model
-from keras.layers import (
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import backend as K
+from tensorflow.keras import Input, Model
+from tensorflow.keras.layers import (
     Activation,
     Conv3D,
-    Deconvolution3D,
+    Conv3DTranspose,
     MaxPooling3D,
     UpSampling3D,
+    concatenate
 )
-from keras.layers.merge import concatenate
-from keras.optimizers import Adam
-from keras.utils import to_categorical
+# from tensorflow.keras.layers.merge import concatenate
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 from tensorflow.compat.v1.logging import INFO, set_verbosity
 
 set_verbosity(INFO)
@@ -79,8 +83,9 @@ def visualize_data_gif(data_):
         z = data_[:, :, min(i, data_.shape[2] - 1)]
         img = np.concatenate((x, y, z), axis=1)
         images.append(img)
-    imageio.mimsave("/tmp/gif.gif", images, duration=0.01)
-    return Image(filename="/tmp/gif.gif", format='png')
+    gif_output = os.path.join(tempfile.gettempdir(), "image.gif")
+    imageio.mimsave(gif_output, images, duration=0.01)
+    return Image(filename=gif_output, format='png')
 
 
 # Some code was borrowed from:
@@ -113,7 +118,7 @@ def get_up_convolution(n_filters, pool_size, kernel_size=(2, 2, 2),
                        strides=(2, 2, 2),
                        deconvolution=False):
     if deconvolution:
-        return Deconvolution3D(filters=n_filters, kernel_size=kernel_size,
+        return Conv3DTranspose(filters=n_filters, kernel_size=kernel_size,
                                strides=strides)
     else:
         return UpSampling3D(size=pool_size)
@@ -170,14 +175,14 @@ def unet_model_3d(loss_function, input_shape=(4, 160, 160, 16),
         up_convolution = get_up_convolution(pool_size=pool_size,
                                             deconvolution=deconvolution,
                                             n_filters=
-                                            current_layer._keras_shape[1])(
+                                            current_layer.shape[1])(
             current_layer)
         concat = concatenate([up_convolution, levels[layer_depth][1]], axis=1)
         current_layer = create_convolution_block(
-            n_filters=levels[layer_depth][1]._keras_shape[1],
+            n_filters=levels[layer_depth][1].shape[1],
             input_layer=concat, batch_normalization=batch_normalization)
         current_layer = create_convolution_block(
-            n_filters=levels[layer_depth][1]._keras_shape[1],
+            n_filters=levels[layer_depth][1].shape[1],
             input_layer=current_layer,
             batch_normalization=batch_normalization)
 
@@ -188,7 +193,7 @@ def unet_model_3d(loss_function, input_shape=(4, 160, 160, 16),
     if not isinstance(metrics, list):
         metrics = [metrics]
 
-    model.compile(optimizer=Adam(lr=initial_learning_rate), loss=loss_function,
+    model.compile(optimizer=Adam(learning_rate=initial_learning_rate), loss=loss_function,
                   metrics=metrics)
     return model
 
@@ -250,7 +255,7 @@ class VolumeDataGenerator(keras.utils.Sequence):
             # Store sample
             if self.verbose == 1:
                 print("Training on: %s" % self.base_dir + ID)
-            with h5py.File(self.base_dir + ID, 'r') as f:
+            with h5py.File(os.path.join(self.base_dir, ID), 'r') as f:
                 X[i] = np.array(f.get("x"))
                 # remove the background class
                 y[i] = np.moveaxis(np.array(f.get("y")), 3, 0)[1:]
